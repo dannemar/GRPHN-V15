@@ -9,6 +9,10 @@
 #include "sim_constants.hpp"
 #include <fmt/core.h>
 
+namespace std {
+    using fmt::format;
+}
+
 __global__ void calc_site_observables_kernel(int N, int num_realizations, int t,
                         const double* uX, const double* uY,
                         const double* uX_ref, const double* uY_ref,
