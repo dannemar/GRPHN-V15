@@ -7,7 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include "sim_constants.hpp"
-#include <format>
+#include <fmt/core.h>
 
 __global__ void calc_site_observables_kernel(int N, int num_realizations, int t,
                         const double* uX, const double* uY,
