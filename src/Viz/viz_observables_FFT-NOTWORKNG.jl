@@ -1,0 +1,155 @@
+using GLMakie
+using Statistics
+using Printf # Added for formatting the energy string
+using FFTW
+
+function process_observable(file_path::String, R::Int)
+    raw_data = collect(reinterpret(Float64, read(file_path)))
+    T_steps = div(length(raw_data), R)
+    mat = reshape(raw_data, (R, T_steps))
+
+    mean_vals = vec(mean(mat, dims=1))
+    std_vals = vec(std(mat, dims=1))
+    sem_vals = std_vals ./ sqrt(R)
+
+    return mean_vals, std_vals, sem_vals, T_steps
+end
+
+function plot_all_observables()
+    data_dir = "../../data/"
+
+    # Define the list of configurations: (W, H, Target Energy)
+    lattice_configs = [(250,250,100)]#[(1024,1024,100), (1024,1024,200), (1024,1024,600), (1024,1024,700)]
+
+    s = 41
+    tt = 550
+    eqt_str = "500.000"
+    dt_str = "0.025"
+    of = 1
+    R = 50
+    dt = parse(Float64, dt_str)
+        eqt = parse(Float64, eqt_str)
+        eq_idx = Int(ceil(eqt / dt)) + 1
+
+        int_scheme_selected = "ABA864"
+
+        # Figure Setup: 4 Rows x 1 Column
+        fig = Figure(size=(2400, 2000), fontsize=23)
+
+        lwidth = 2.5 #* 2
+
+        println("Equilibration Calc: $(eq_idx)")
+
+        # Define axes for linear-linear scale
+        ax_auto_cd = Axis(fig[1, 1],
+            xlabel="Time",
+            ylabel="Absolute C_D(t)"
+        )
+        ax_auto_ce = Axis(fig[2, 1],
+            xlabel="Time",
+            ylabel="Energy C_E(t)"
+        )
+        ax_auto_crel = Axis(fig[3, 1],
+            xlabel="Time",
+            ylabel="Length C_rel(t)"
+        )
+        ax_crel_fft = Axis(fig[2, 2],
+            xlabel="freq",
+            ylabel="mag"
+        )
+        #=
+        ax_temp = Axis(fig[4, 1],
+            xlabel="Time",
+            ylabel="Temperature (K)"
+        )
+        =#
+
+
+        # Use Makie's color palette to differentiate sizes
+        colors = Makie.wong_colors()
+
+        for (idx, (w, h, energy)) in enumerate(lattice_configs)
+            # Assign a consistent color for this specific configuration
+            c = colors[mod1(idx, length(colors))]
+
+            # Format the energy to 2 decimal places for the filename (e.g., 100.0 -> "100.00")
+            e_str = @sprintf("%.2f", energy)
+
+            # Update label to include the energy/temperature
+            lbl = "$(w)x$(h), E=$(energy)"
+
+            strEnd = "_w-$(w)_h-$(h)_H-$(e_str)_s-$(s)_tt-$(tt)_eqt-$(eqt_str)_dt-$(dt_str)_r-$(R)_of-$(of)"
+
+            # File paths
+            temp_path = joinpath(data_dir, "temperature" * strEnd * ".bin")
+            autocorr_cd_path = joinpath(data_dir, "acf_C_D" * strEnd * ".bin")
+            autocorr_crel_path = joinpath(data_dir, "acf_C_rel" * strEnd * ".bin")
+            autocorr_ce_path = joinpath(data_dir, "acf_C_E" * strEnd * ".bin")
+
+            # Process data
+            mean_temp, _, _, T_steps = process_observable(temp_path, R)
+            mean_cd, _, _, _ = process_observable(autocorr_cd_path, R)
+            mean_crel, _, _, _ = process_observable(autocorr_crel_path, R)
+            mean_ce, _, _, _ = process_observable(autocorr_ce_path, R)
+
+            t_phy = (1:T_steps) .* dt
+            avg_temp_val = mean(mean_temp[eq_idx:end])
+            avg_crel_val = mean(mean_ce[eq_idx:end])
+            mean_crel = mean_crel .- avg_crel_val  #THIS SHOULD BE FIXED IN THE ACTUAL SIM CODE AND NOT DONE AFTERWARDS LIKE IT IS DONE HERE!!
+            creL_fft = fft(mean_crel)
+            N_obs_len = length(mean_crel)
+            fs = 1/dt
+            axis_samples = fftfreq(N_obs_len, fs)
+            creL_fft_abs = abs.(creL_fft)
+                pos_idx = 1:div(N_obs_len, 2)
+                freqs_pos = axis_samples[pos_idx]
+                fft_abs_pos = creL_fft_abs[pos_idx]
+
+
+            # Plot Row 1: Autocorrelation C_D (Absolute) - Raw data
+            lines!(ax_auto_cd, t_phy[eq_idx:end],
+                mean_cd[eq_idx:end],
+                color=c,
+                linewidth=lwidth + 2.5,
+                label="C_D ($lbl)")
+
+            # Plot Row 2: Autocorrelation C_E (Energy) - Raw data
+            lines!(ax_auto_ce, t_phy[eq_idx:end],
+                mean_ce[eq_idx:end],
+                color=c,
+                linewidth=lwidth,
+                label="C_E ($lbl)")
+
+            # Plot Row 3: Autocorrelation C_rel (Relative Length) - Raw data
+            lines!(ax_auto_crel, t_phy[eq_idx:end],
+                mean_crel[eq_idx:end],
+                color=c,
+                linewidth=lwidth,
+                label="C_rel ($lbl)")
+
+            lines!(ax_crel_fft, freqs_pos,
+                fft_abs_pos,
+                color=c,
+                linewidth=lwidth,
+                label="C_rel FFT ($lbl)")
+#=
+            # Plot Row 4: Temperature
+            lines!(ax_temp, t_phy, mean_temp, color=c, linewidth=lwidth, label="Mean Temp ($lbl)")
+            hlines!(ax_temp, [avg_temp_val], color=c, linestyle=:dashdot, linewidth=lwidth, label="Avg T ≈ $(round(avg_temp_val, digits=3))K ($lbl)")
+=#
+        end
+#=
+        # Add single vertical equilibration line for Temperature
+        vlines!(ax_temp, [eq_idx * dt], color=:black, linestyle=:dash, linewidth=2, label="Eq Point")
+=#
+        # Add legends to all subplots
+        axislegend(ax_auto_cd, position=:rt)
+        axislegend(ax_auto_ce, position=:rt)
+        axislegend(ax_auto_crel, position=:rt)
+       # axislegend(ax_temp, position=:rt, nbanks=2) # Expanded banks for multiple sizes
+
+        # Save and display
+        save("../../img/AB_viz_obsrv_LINLIN_FFTW-WIP_$(int_scheme_selected)_4x1_Raw.png", fig)
+    end
+
+    plot_all_observables()
